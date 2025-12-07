@@ -2,17 +2,24 @@
 """
 FBRef Scraper Web Arayuzu
 Streamlit ile lig secimi ve scrape kontrolu
-Cloud-ready version with st.secrets support
+Cloud-ready version with pymssql support
 """
 
 import streamlit as st
-import pyodbc
 from datetime import datetime
 import subprocess
 import sys
 import threading
 import time
 import pandas as pd
+
+# Database connection - try pymssql first (for cloud), fallback to pyodbc (local)
+try:
+    import pymssql
+    USE_PYMSSQL = True
+except ImportError:
+    import pyodbc
+    USE_PYMSSQL = False
 
 # Sayfa ayarlari
 st.set_page_config(
@@ -21,27 +28,25 @@ st.set_page_config(
     layout="wide"
 )
 
-def get_connection_string():
-    """Get connection string from secrets or fallback to default"""
+def get_db_config():
+    """Get database configuration"""
     try:
-        # Try Streamlit secrets first (for cloud deployment)
         db = st.secrets["database"]
-        return (
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={db['server']};"
-            f"DATABASE={db['database']};"
-            f"UID={db['username']};"
-            f"PWD={db['password']};"
-        )
+        return {
+            'server': db['server'].split(',')[0],
+            'port': int(db['server'].split(',')[1]) if ',' in db['server'] else 1433,
+            'database': db['database'],
+            'user': db['username'],
+            'password': db['password']
+        }
     except:
-        # Fallback for local development
-        return (
-            "DRIVER={SQL Server};"
-            "SERVER=195.201.146.224,1433;"
-            "DATABASE=FBREF;"
-            "UID=sa;"
-            "PWD=FbRef2024Str0ng;"
-        )
+        return {
+            'server': '195.201.146.224',
+            'port': 1433,
+            'database': 'FBREF',
+            'user': 'sa',
+            'password': 'FbRef2024Str0ng'
+        }
 
 # Tüm ligler
 FULL_STATS_LEAGUES = [
@@ -77,7 +82,25 @@ SUMMARY_LEAGUES = [
 
 
 def get_db_connection():
-    return pyodbc.connect(get_connection_string())
+    """Get database connection using pymssql or pyodbc"""
+    config = get_db_config()
+    if USE_PYMSSQL:
+        return pymssql.connect(
+            server=config['server'],
+            port=config['port'],
+            user=config['user'],
+            password=config['password'],
+            database=config['database']
+        )
+    else:
+        conn_str = (
+            f"DRIVER={{SQL Server}};"
+            f"SERVER={config['server']},{config['port']};"
+            f"DATABASE={config['database']};"
+            f"UID={config['user']};"
+            f"PWD={config['password']};"
+        )
+        return pyodbc.connect(conn_str)
 
 
 def get_table_stats():
@@ -242,15 +265,8 @@ def main():
         st.header("Ayarlar")
 
         st.subheader("Veritabani Baglantisi")
-        conn_str = get_connection_string()
-        # Mask password in display
-        masked = conn_str.replace("FbRef2024Str0ng", "*****")
-        for word in conn_str.split(";"):
-            if "PWD=" in word:
-                pwd = word.split("=")[1] if "=" in word else ""
-                masked = conn_str.replace(pwd, "*****")
-                break
-        st.code(masked)
+        config = get_db_config()
+        st.code(f"Server: {config['server']}:{config['port']}\nDatabase: {config['database']}\nUser: {config['user']}\nDriver: {'pymssql' if USE_PYMSSQL else 'pyodbc'}")
 
         st.subheader("Sezon")
         st.text("2025-2026")
